@@ -6,4 +6,4 @@ A one-page, GMAT-style timed practice portal.
 - Take the section with exam rules: one question at a time, a running clock, bookmarks, and a review screen that allows up to 3 answer edits
 - Get a report: score, accuracy by difficulty and topic, and time and right/wrong for every question. Copy it as JSON to hand back to Claude.
 
-Everything is in `index.html`; there's no build step. It's deployed on Vercel.
+Everything is in `index.html`; there's no build step. It deploys to Vercel on every push to `main`: https://gmat-portal.vercel.app
