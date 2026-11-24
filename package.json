@@ -1,0 +1,9 @@
+{
+  "name": "gmat-portal",
+  "private": true,
+  "description": "GMAT Practice Room: static page plus one serverless function for cloud history",
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@vercel/blob": "2.9.0"
+  }
+}

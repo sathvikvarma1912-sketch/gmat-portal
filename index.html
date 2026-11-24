@@ -24,6 +24,13 @@ h1{font-size:clamp(28px,5vw,40px)}h2{font-size:22px;margin:32px 0 12px}
 .clock{background:transparent;border:1px solid #ffffff40;color:var(--lime);font:700 18px "Inter Tight",sans-serif;border-radius:8px;padding:6px 12px;min-height:40px;cursor:pointer;white-space:nowrap}
 .clock.warn{color:#fff;background:var(--coral);border-color:var(--coral)}
 .cnt{color:#ffffffcc;white-space:nowrap;font-size:15px}
+.sync{font-size:13px;color:#ffffffcc;white-space:nowrap;display:flex;align-items:center;gap:6px}.sync::before{content:"";width:8px;height:8px;border-radius:50%;background:#ffffff66}
+.sync[data-s=on]::before{background:#9be37a}.sync[data-s=off]::before{background:var(--coral)}.sync[data-s=busy]::before{background:var(--lime)}
+.lib{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px 14px;align-items:center;padding:12px 2px;border-bottom:1px solid var(--line)}
+.lrow .row{justify-content:flex-end}.lrow button{min-height:40px;padding:0 14px}
+@media(max-width:520px){.lrow{grid-template-columns:1fr}.lrow .row{justify-content:flex-start}}
+.sechead{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin:32px 0 12px}.sechead h2{margin:0}
 .wrap{max-width:1000px;margin:0 auto;padding:clamp(24px,4vw,48px) max(5vw,16px) 64px}
 .lede{color:var(--mut);margin:10px 0 24px;max-width:60ch}
 .mut{color:var(--mut)}.small{font-size:14px}.num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
@@ -118,7 +125,7 @@ const L='ABCDE';
 const DS_OPTS=['Statement (1) ALONE is sufficient, but statement (2) alone is not sufficient.','Statement (2) ALONE is sufficient, but statement (1) alone is not sufficient.','BOTH statements TOGETHER are sufficient, but NEITHER statement ALONE is sufficient.','EACH statement ALONE is sufficient.','Statements (1) and (2) TOGETHER are NOT sufficient.'];
 const TYPES={PS:'Problem Solving',DS:'Data Sufficiency',CR:'Critical Reasoning',RC:'Reading Comprehension',DI:'Data Insights',TA:'Table Analysis',GI:'Graphics Interpretation',MSR:'Multi-Source Reasoning',TPA:'Two-Part Analysis'};
 const DIFF=['Easy','Medium','Hard','Very Hard'];
-const KEY='gmat-room-session-v1',HIST='gmat-room-history-v1';
+const KEY='gmat-room-session-v1',HIST='gmat-room-history-v1',TESTS='gmat-room-tests-v1';
 const app=document.getElementById('app'),hud=document.getElementById('hud');
 const store={get(k){try{return JSON.parse(localStorage.getItem(k))}catch(e){return null}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}},del(k){try{localStorage.removeItem(k)}catch(e){}}};
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -134,12 +141,69 @@ const SAMPLE={title:'Sample – mixed Quant & Verbal',section:'Mixed',timeLimitM
 {id:'Q4',type:'CR',topic:'Critical Reasoning',subtopic:'Weaken',difficulty:'Medium',passage:'After the town of Arden installed speed cameras along Main Street, the number of traffic accidents on Main Street fell by 30 percent over the following year. The town council concluded that the cameras caused the decline.',question:'Which of the following, if true, most seriously weakens the council\'s conclusion?',options:['Speed cameras are costly for the town to maintain.','In the same year, a newly opened bypass diverted most truck traffic away from Main Street.','Accident rates in nearby towns without speed cameras rose slightly that year.','Most Arden residents say they support the cameras.','The cameras were placed at the three intersections with the most accidents.'],answer:'B',explanation:'B offers an alternative cause for the decline, so the cameras need not be responsible.'},
 {id:'Q5',type:'RC',topic:'Reading Comprehension',subtopic:'Inference',difficulty:'Hard',passage:'Most flowering plants release pollen passively, but some, such as the tomato, have anthers that release pollen only when vibrated at particular frequencies, a process known as buzz pollination. Honeybees cannot produce these vibrations; bumblebees can. Greenhouse tomato growers, who long relied on workers who vibrated each flower by hand with electric wands, began importing commercial bumblebee colonies in the late 1980s. The shift reduced labor costs substantially, although some ecologists warn that colonies escaping from greenhouses may compete with native pollinators.',question:'It can be inferred from the passage that, before the late 1980s, greenhouse tomato growers',options:['relied mainly on honeybees to pollinate their crops','spent money on labor to release pollen that the flowers would not otherwise release efficiently','did not know that tomato flowers require vibration to release pollen','imported native bumblebee species from other regions','were criticized by ecologists for their pollination methods'],answer:'B',explanation:'Growers paid workers to vibrate flowers by hand, and the switch to bumblebees cut labor costs.'}]};
 
-let S=store.get(KEY),pending=null,timer=null,hideClock=false,ticks=0;
-const save=()=>{if(S&&S.phase!=='done')store.set(KEY,S)};
+let S=store.get(KEY),pending=null,timer=null,hideClock=false,ticks=0,view='load';
+const save=()=>{if(S&&S.phase!=='done'){S.savedAt=Date.now();store.set(KEY,S)}};
 
-function normalize(raw){
-  let d=raw;
-  if(typeof raw==='string'){const t=raw.trim().replace(/^```(?:json)?\s*/i,'').replace(/```\s*$/,'');try{d=JSON.parse(t)}catch(e){throw Error('That isn’t valid JSON: '+e.message)}}
+/* ---------- ids, local library, history ---------- */
+const hash=s=>{let h=5381;for(let i=0;i<s.length;i++)h=(h*33^s.charCodeAt(i))>>>0;return h.toString(36)};
+const testId=t=>'t'+hash(JSON.stringify(t.questions.map(q=>[q.question,q.answer,q.options])));
+const attemptId=r=>'a'+Date.parse(r.takenAt);
+const getHist=()=>(store.get(HIST)||[]).map(h=>(h.id=h.id||attemptId(h.report),h.testId=h.testId||testId(h.test),h));
+const getTests=()=>store.get(TESTS)||[];
+const byNewest=(a,b)=>String(b.report.takenAt).localeCompare(String(a.report.takenAt));
+const setHist=h=>store.set(HIST,h.sort(byNewest).slice(0,100));
+
+/* ---------- cloud sync (Vercel function + private Blob store) ---------- */
+let cloudOn=null;
+const SYNC={on:'Synced',busy:'Syncing…',off:'This device only'};
+function setSync(s){const el=document.getElementById('sync');if(el){el.textContent=SYNC[s];el.dataset.s=s}}
+const syncPill=()=>`<span class="sync" id="sync" data-s="${cloudOn?'on':cloudOn===false?'off':'busy'}">${cloudOn?SYNC.on:cloudOn===false?SYNC.off:SYNC.busy}</span>`;
+async function api(method,body,qs){
+  const r=await fetch('/api/sync'+(qs||''),{method,headers:body?{'content-type':'application/json'}:undefined,body:body?JSON.stringify(body):undefined,credentials:'same-origin',cache:'no-store'});
+  const ct=r.headers.get('content-type')||'';
+  if(!r.ok||!ct.includes('json'))throw Error('HTTP '+r.status);
+  return r.json();
+}
+async function push(kind,id,data){
+  if(cloudOn===false)return false;
+  try{await api('POST',{kind,id,data});cloudOn=true;setSync('on');return true}catch(e){cloudOn=false;setSync('off');return false}
+}
+const drop=(kind,id)=>{if(cloudOn)api('DELETE',null,`?kind=${kind}&id=${encodeURIComponent(id||'x')}`).catch(()=>{})};
+let sessT=null;
+const pushSession=()=>{clearTimeout(sessT);sessT=setTimeout(()=>{if(S&&S.phase!=='done')push('session','current',S)},400)};
+function saveTest(t){
+  const id=testId(t),tests=getTests();
+  if(tests.some(x=>x.id===id))return id;
+  const entry={id,title:t.title,savedAt:new Date().toISOString(),test:t};
+  tests.unshift(entry);store.set(TESTS,tests);push('test',id,entry);
+  return id;
+}
+function mergeIn(data,{upload}){
+  const hist=getHist(),tests=getTests();let added=0;
+  for(const a of data.attempts||[]){if(!a||!a.report||!a.test)continue;a.id=a.id||attemptId(a.report);a.testId=a.testId||testId(a.test);if(!hist.some(h=>h.id===a.id)){hist.push(a);added++;if(upload)push('attempt',a.id,a)}}
+  for(const t of data.tests||[]){if(!t||!t.test)continue;t.id=t.id||testId(t.test);if(!tests.some(x=>x.id===t.id)){tests.push(t);added++;if(upload)push('test',t.id,t)}}
+  setHist(hist);store.set(TESTS,tests.sort((a,b)=>String(b.savedAt).localeCompare(String(a.savedAt))));
+  return added;
+}
+async function pull(){
+  setSync('busy');
+  let d;
+  try{d=await api('GET');cloudOn=true}catch(e){cloudOn=false;setSync('off');return}
+  mergeIn(d,{upload:false});
+  // back up anything that so far lives only on this device
+  const cloudA=new Set(d.attempts.map(a=>a.id)),cloudT=new Set(d.tests.map(t=>t.id));
+  getHist().filter(h=>!cloudA.has(h.id)).forEach(h=>push('attempt',h.id,h));
+  getTests().filter(t=>!cloudT.has(t.id)).forEach(t=>push('test',t.id,t));
+  // an unfinished section: keep whichever device touched it last
+  const cs=d.session,localLive=S&&S.phase!=='done';
+  if(localLive&&cloudA.has('a'+S.startAt)){S=null;store.del(KEY)}
+  if(cs&&cs.phase&&cs.phase!=='done'&&!cloudA.has('a'+cs.startAt)&&(!S||S.phase==='done'||(cs.savedAt||0)>(S.savedAt||0))){S=cs;store.set(KEY,S)}
+  else if(S&&S.phase!=='done'&&(!cs||(S.savedAt||0)>(cs.savedAt||0)))pushSession();
+  setSync('on');
+  if(view==='load')renderLoad();
+}
+
+function normalize(d){
   if(Array.isArray(d))d={questions:d};
   if(!d||!Array.isArray(d.questions)||!d.questions.length)throw Error('No "questions" array found in the JSON.');
   const qs=d.questions.map((q,i)=>{
@@ -162,47 +226,65 @@ function tableHTML(t){
 
 /* ---------- load screen ---------- */
 function renderLoad(err){
-  stopTick();hud.innerHTML='';
-  const hist=store.get(HIST)||[],live=S&&S.phase!=='done';
+  stopTick();view='load';hud.innerHTML=syncPill();
+  const hist=getHist().sort(byNewest),tests=getTests(),live=S&&S.phase!=='done';
+  const byTest={};hist.forEach(h=>{(byTest[h.testId]=byTest[h.testId]||[]).push(h)});
   app.innerHTML=`<div class="wrap">
   <h1>Load a practice section</h1>
-  <p class="lede">Upload or paste the JSON Claude gives you. You get exam rules: one question at a time, a running clock, and a review screen with up to 3 answer edits.</p>
-  ${live?`<div class="card resume"><div><b>${esc(S.test.title)}</b><span class="mut small">In progress · question ${S.idx+1} of ${S.test.questions.length} · ${fmt((S.endAt-Date.now())/1000)} left</span></div><div class="row"><button class="pri" data-act="resume">Resume</button><button class="ghost" data-act="discard">Discard</button></div></div>`:''}
+  <p class="lede">Upload or paste the JSON Claude gives you. You get exam rules: one question at a time, a running clock, and a review screen with up to 3 answer edits. Tests and results sync to every device you log in from.</p>
+  ${live?`<div class="card resume"><div><b>${esc(S.test.title)}</b><span class="mut small">In progress · question ${S.idx+1} of ${S.test.questions.length} · ${fmt((S.endAt-Date.now())/1000)} left${S.savedAt?' · last active '+esc(new Date(S.savedAt).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})):''}</span></div><div class="row"><button class="pri" data-act="resume">Resume</button><button class="ghost" data-act="discard">Discard</button></div></div>`:''}
   <div class="grid2" style="margin-top:20px">
-    <label class="drop" id="drop"><input type="file" id="file" accept=".json,application/json,text/plain"><b>Upload a .json file</b><span class="mut small">Tap to choose, or drop it here</span></label>
+    <label class="drop" id="drop"><input type="file" id="file" accept=".json,application/json,text/plain"><b>Upload a .json file</b><span class="mut small">A test from Claude, or a history export</span></label>
     <div class="paste"><textarea id="txt" spellcheck="false" placeholder='Or paste the JSON here: { "title": …, "questions": [ … ] }'></textarea><button class="pri" data-act="paste">Load pasted JSON</button></div>
   </div>
   <div id="err" class="err" ${err?'':'hidden'}>${esc(err||'')}</div>
   <div id="prev"></div>
   <p class="mut small" style="margin-top:18px">No test yet? <button class="link" data-act="sample">Load the 5-question sample</button></p>
   <details><summary>Prompt to get a test from Claude</summary><p class="mut small">Copy this into any chat, replace the topic, then paste Claude’s JSON above.</p><textarea id="prompt" readonly style="min-height:220px"></textarea><div class="row" style="margin-top:10px"><button class="ghost" data-act="copyPrompt">Copy prompt</button></div></details>
-  ${hist.length?`<h2>Past attempts</h2><div class="hist">${hist.map((h,i)=>`<button class="hrow" data-act="hist" data-i="${i}"><span>${esc(h.report.title)}<br><span class="mut small">${esc(new Date(h.report.takenAt).toLocaleString())}</span></span><span class="num">${fmt(h.report.timeUsedSec)}</span><span class="num"><b>${h.report.score.correct}/${h.report.score.total}</b></span></button>`).join('')}</div>`:''}
+  ${tests.length?`<div class="sechead"><h2>My tests</h2><span class="mut small">${tests.length} saved</span></div><div class="lib">${tests.map((t,i)=>{const at=byTest[t.id]||[],best=at.reduce((m,h)=>Math.max(m,h.report.score.correct),-1);return`<div class="lrow"><div><b>${esc(t.title)}</b><div class="mut small">${t.test.questions.length} questions · ${t.test.timeLimitMinutes} min · ${at.length?`${at.length} attempt${at.length>1?'s':''}, best ${best}/${t.test.questions.length}`:'not taken yet'}</div></div><div class="row"><button class="pri" data-act="take" data-i="${i}">${at.length?'Retake':'Take'}</button><button class="ghost" data-act="rmtest" data-i="${i}">Remove</button></div></div>`}).join('')}</div>`:''}
+  <div class="sechead"><h2>Past attempts</h2><div class="row"><button class="ghost" data-act="export">Export history</button><label class="ghost" style="display:inline-flex;align-items:center;min-height:44px;padding:0 18px;border:1px solid var(--line);border-radius:10px;cursor:pointer">Import<input type="file" id="imp" accept=".json,application/json,text/plain" style="position:absolute;opacity:0;width:1px;height:1px"></label></div></div>
+  ${hist.length?`<div class="hist">${hist.map(h=>`<button class="hrow" data-act="hist" data-id="${esc(h.id)}"><span>${esc(h.report.title)}<br><span class="mut small">${esc(new Date(h.report.takenAt).toLocaleString())}</span></span><span class="num">${fmt(h.report.timeUsedSec)}</span><span class="num"><b>${h.report.score.correct}/${h.report.score.total}</b></span></button>`).join('')}</div>`:'<p class="mut">No attempts yet. Finished sections show up here on every device.</p>'}
+  <div id="exp" hidden><p class="mut small">Select all and copy, or save it as a .json file. Import it on any device.</p><textarea id="expTxt" readonly></textarea></div>
   </div>`;
   document.getElementById('prompt').value=document.getElementById('promptTpl').innerHTML.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>');
-  const f=document.getElementById('file'),drop=document.getElementById('drop');
+  const f=document.getElementById('file'),drop=document.getElementById('drop'),imp=document.getElementById('imp');
   const readFile=file=>{if(!file)return;const r=new FileReader();r.onload=()=>loadData(String(r.result));r.onerror=()=>showErr('Could not read that file.');r.readAsText(file)};
   f.addEventListener('change',()=>readFile(f.files[0]));
+  imp.addEventListener('change',()=>readFile(imp.files[0]));
   drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('over')});
   drop.addEventListener('dragleave',()=>drop.classList.remove('over'));
   drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('over');readFile(e.dataTransfer.files[0])});
 }
-function showErr(m){const e=document.getElementById('err');if(e){e.hidden=!m;e.textContent=m||''}}
+function showErr(m){const e=document.getElementById('err');if(e){e.hidden=!m;e.textContent=m||'';if(m)e.scrollIntoView({block:'center'})}}
 function loadData(raw){
-  try{pending=normalize(raw)}catch(e){pending=null;showErr(e.message);document.getElementById('prev').innerHTML='';return}
-  showErr('');
+  let d=raw;
+  if(typeof raw==='string'){try{d=JSON.parse(raw.trim().replace(/^```(?:json)?\s*/i,'').replace(/```\s*$/,''))}catch(e){showErr('That isn’t valid JSON: '+e.message);return}}
+  if(d&&!Array.isArray(d)&&!d.questions&&(Array.isArray(d.attempts)||Array.isArray(d.tests))){
+    const n=mergeIn(d,{upload:true});renderLoad();
+    showErr('');const p=document.getElementById('prev');p.innerHTML=`<div class="card">Imported ${n} new item${n===1?'':'s'}${cloudOn?' and synced them':''}.</div>`;return;
+  }
+  if(d&&d.app==='GMAT Practice Room'&&d.score&&Array.isArray(d.questions)){showErr('That’s a single report. Upload a history export (Export history) or a test JSON instead.');return}
+  try{pending=normalize(d)}catch(e){pending=null;showErr(e.message);document.getElementById('prev').innerHTML='';return}
+  showErr('');saveTest(pending);
   const t=pending,n=t.questions.length,c={},dc={};
   t.questions.forEach(q=>{c[q.type]=(c[q.type]||0)+1;dc[q.difficulty]=(dc[q.difficulty]||0)+1});
   const p=document.getElementById('prev');
   p.innerHTML=`<div class="card"><h2 style="margin:0 0 4px">${esc(t.title)}</h2><div class="mut">${esc(t.section)}${t.section?' · ':''}${n} questions · ${t.timeLimitMinutes} minutes · about ${fmt(t.timeLimitMinutes*60/n)} per question</div>
   <div class="chips">${Object.entries(c).map(([k,v])=>`<span class="chip">${esc(TYPES[k]||k)} × ${v}</span>`).join('')}${Object.entries(dc).map(([k,v])=>`<span class="chip">${esc(k)} × ${v}</span>`).join('')}</div>
-  <ul class="rules"><li>You must answer each question to move on; you can’t go back during the section.</li><li>Bookmark anything you want to revisit. After the last question you can review and change up to 3 answers.</li><li>The clock keeps running if you leave the page. At 0:00 the section ends and unanswered questions count as wrong.</li></ul>
+  <ul class="rules"><li>You must answer each question to move on; you can’t go back during the section.</li><li>Bookmark anything you want to revisit. After the last question you can review and change up to 3 answers.</li><li>The clock keeps running if you leave the page or switch devices. At 0:00 the section ends and unanswered questions count as wrong.</li></ul>
   <button class="pri" data-act="start">Start the ${t.timeLimitMinutes}-minute section</button></div>`;
   p.scrollIntoView({behavior:'smooth',block:'start'});
 }
 function start(){
   const now=Date.now(),n=pending.questions.length;
   S={test:pending,idx:0,phase:'test',view:'q',answers:Array(n).fill(null),times:Array(n).fill(0),bookmarks:Array(n).fill(false),orig:null,startAt:now,endAt:now+pending.timeLimitMinutes*60000,qStart:now};
-  pending=null;save();render();startTick();
+  pending=null;save();pushSession();render();startTick();
+}
+function exportHistory(btn){
+  const data={app:'GMAT Practice Room',kind:'history',version:1,exportedAt:new Date().toISOString(),tests:getTests(),attempts:getHist()};
+  const txt=JSON.stringify(data);
+  if(window.self===window.top){try{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([txt],{type:'application/json'}));a.download=`gmat-history-${new Date().toLocaleDateString('en-CA')}.json`;document.body.appendChild(a);a.click();a.remove();btn.textContent='Downloaded ✓';return}catch(e){}}
+  const box=document.getElementById('exp'),ta=document.getElementById('expTxt');box.hidden=false;ta.value=txt;ta.focus();ta.select();btn.textContent='Copy the text below';
 }
 
 /* ---------- clock ---------- */
@@ -221,7 +303,7 @@ function stamp(){if(S.qStart!=null)S.times[S.idx]+=(Date.now()-S.qStart)/1000;S.
 /* ---------- test ---------- */
 function render(){
   if(!S||S.phase==='done')return renderLoad();
-  const n=S.test.questions.length;
+  view='test';const n=S.test.questions.length;
   hud.innerHTML=`<span class="cnt">${S.phase==='review'?'Review':`Question ${S.idx+1} of ${n}`}</span><button class="clock" id="clock" data-act="clock" aria-label="Time remaining"></button>`;
   if(S.phase==='review'&&S.view==='list')renderReview();else renderQ();
   tick();window.scrollTo(0,0);
@@ -260,8 +342,10 @@ function finish(timedOut){
   stopTick();stamp();
   S.phase='done';S.finishedAt=Math.min(Date.now(),S.endAt);S.timedOut=!!timedOut;
   const report=buildReport();
-  const hist=store.get(HIST)||[];hist.unshift({report,test:S.test});store.set(HIST,hist.slice(0,15));store.del(KEY);
-  renderResults(report,S.test);
+  const entry={id:'a'+S.startAt,testId:testId(S.test),report,test:S.test};
+  const hist=getHist().filter(h=>h.id!==entry.id);hist.unshift(entry);setHist(hist);store.del(KEY);
+  clearTimeout(sessT);push('attempt',entry.id,entry).then(ok=>{if(ok)drop('session','current')});
+  view='results';renderResults(report,S.test);
 }
 
 /* ---------- report ---------- */
@@ -301,14 +385,17 @@ app.addEventListener('click',async e=>{
   else if(act==='paste')loadData(document.getElementById('txt').value);
   else if(act==='start')start();
   else if(act==='resume'){if(Date.now()>=S.endAt)finish(true);else{if(S.phase==='test'||S.view==='q')S.qStart=S.qStart??Date.now();render();startTick()}}
-  else if(act==='discard'){if(arm('discard',b,'Tap again to discard')){store.del(KEY);S=null;renderLoad()}}
+  else if(act==='discard'){if(arm('discard',b,'Tap again to discard')){store.del(KEY);S=null;drop('session','current');renderLoad()}}
   else if(act==='bm'){S.bookmarks[S.idx]=!S.bookmarks[S.idx];b.textContent=S.bookmarks[S.idx]?'★ Bookmarked':'☆ Bookmark';save()}
-  else if(act==='next'){if(!S.answers[S.idx])return;stamp();if(S.idx<S.test.questions.length-1){S.idx++;S.qStart=Date.now()}else{S.phase='review';S.view='list';S.orig=S.answers.slice()}save();render()}
-  else if(act==='open'){S.idx=+b.dataset.i;S.view='q';S.qStart=Date.now();save();render()}
-  else if(act==='back'){stamp();S.view='list';save();render()}
+  else if(act==='next'){if(!S.answers[S.idx])return;stamp();if(S.idx<S.test.questions.length-1){S.idx++;S.qStart=Date.now()}else{S.phase='review';S.view='list';S.orig=S.answers.slice()}save();pushSession();render()}
+  else if(act==='open'){S.idx=+b.dataset.i;S.view='q';S.qStart=Date.now();save();pushSession();render()}
+  else if(act==='back'){stamp();S.view='list';save();pushSession();render()}
   else if(act==='end'){if(arm('end',b,'Tap again to end the section'))finish(false)}
-  else if(act==='home'){S=null;pending=null;renderLoad()}
-  else if(act==='hist'){const h=(store.get(HIST)||[])[+b.dataset.i];if(h)renderResults(h.report,h.test)}
+  else if(act==='home'){S=null;pending=null;renderLoad();pull()}
+  else if(act==='hist'){const h=getHist().find(x=>x.id===b.dataset.id);if(h){view='results';renderResults(h.report,h.test)}}
+  else if(act==='take'){const t=getTests()[+b.dataset.i];if(t)loadData(t.test)}
+  else if(act==='rmtest'){if(arm('rm'+b.dataset.i,b,'Tap again to remove')){const ts=getTests(),t=ts.splice(+b.dataset.i,1)[0];store.set(TESTS,ts);if(t)drop('test',t.id);renderLoad()}}
+  else if(act==='export')exportHistory(b);
   else if(act==='copy'||act==='copyPrompt'){
     const txt=act==='copy'?app.dataset.report:document.getElementById('prompt').value;
     try{await navigator.clipboard.writeText(txt);b.textContent='Copied ✓'}catch(err){const t=document.getElementById(act==='copy'?'rj':'prompt');t.closest('details').open=true;t.focus();t.select();b.textContent='Select all & copy below'}
@@ -317,9 +404,10 @@ app.addEventListener('click',async e=>{
   else if(act==='sort'){const tb=b.closest('table').tBodies[0],c=+b.dataset.c,rows=[...tb.rows],dir=b.dataset.d==='1'?-1:1;b.dataset.d=dir===1?'1':'0';const v=r=>{const s=r.cells[c]?.textContent||'',n=parseFloat(s.replace(/[^0-9.\-]/g,''));return isNaN(n)?s:n};rows.sort((x,y)=>{const a=v(x),bb=v(y);return(typeof a==='number'&&typeof bb==='number'?a-bb:String(a).localeCompare(String(bb)))*dir});rows.forEach(r=>tb.appendChild(r))}
 });
 hud.addEventListener('click',e=>{if(e.target.closest('[data-act=clock]')){hideClock=!hideClock;tick()}});
-document.addEventListener('visibilitychange',()=>{if(document.hidden)save()});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){save();if(S&&S.phase!=='done')push('session','current',S)}else if(view==='load')pull()});
 
-if(S&&S.phase!=='done'){if(Date.now()>=S.endAt)finish(true);else{render();startTick()}}else renderLoad();
+renderLoad();
+pull().then(()=>{if(view==='load'&&S&&S.phase!=='done'&&Date.now()>=S.endAt)finish(true)});
 }
 </script>
 </body></html>
