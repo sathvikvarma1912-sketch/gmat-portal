@@ -107,6 +107,10 @@ table{border-collapse:collapse;width:100%;font-size:15px}th,td{border-bottom:1px
 .track{height:14px;background:var(--soft);border:1px solid var(--line);border-radius:2px;overflow:hidden}.fill{height:100%;background:var(--blue)}
 .ok{color:var(--ok);font-weight:700}.bad{color:var(--bad);font-weight:700}.slow{color:var(--coral);font-weight:700}
 .copybar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:24px 0 8px;padding:14px 16px;border-radius:4px;background:var(--soft);border:1px solid var(--line)}
+.path{display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));gap:3px;align-items:end;height:120px;padding:8px 0 0;border-bottom:1px solid var(--line)}
+.path i{display:block;border-radius:2px 2px 0 0;background:var(--ok)}.path i.x{background:var(--bad)}
+.pathax{display:flex;justify-content:space-between;font-size:12px;color:var(--mut);margin-top:4px}
+.legend{display:flex;gap:16px;font-size:13px;color:var(--mut);margin-top:6px}.legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;background:var(--ok)}.legend span.x::before{background:var(--bad)}
 .exp{border-top:1px solid var(--line);padding:14px 0}.exp h3{font-size:16px;margin:0 0 6px}
 pre,.scroll{overflow-x:auto}code{overflow-wrap:anywhere}
 @media(max-width:600px){table{font-size:13px}.stack thead{display:none}.stack tr{display:grid;padding-block:10px;border-bottom:1px solid var(--line)}.stack td{display:flow-root;border:0;padding:3px 0;padding-inline-start:8em;text-align:start}.stack td::before{content:attr(data-l);float:inline-start;width:7.5em;margin-inline-start:-8em;white-space:normal;color:var(--mut)}.stack td:empty{display:none}}
@@ -137,7 +141,8 @@ Return ONLY valid JSON (no commentary) in exactly this format:
     }
   ]
 }
-Rules: type is PS, DS, CR, RC or DI. "answer" is one letter A–E. DS questions: put the two statements in "statements" and leave "options" empty. RC and CR stimulus text goes in "passage". DI tables: add "table": {"headers": [...], "rows": [[...]]}. Write math as \\( ... \\) (double backslash inside JSON). Include a concise explanation for every question.</template>
+Rules: type is PS, DS, CR, RC or DI. "answer" is one letter A–E. DS questions: put the two statements in "statements" and leave "options" empty. RC and CR stimulus text goes in "passage". DI tables: add "table": {"headers": [...], "rows": [[...]]}. Write math as \\( ... \\) (double backslash inside JSON). Include a concise explanation for every question.
+Adaptive version (recommended): add "adaptive": true and "questionCount": 23 at the top, and give a pool of 46 questions: 8 Easy, 15 Medium, 15 Hard, 8 Very Hard, with varied subtopics at every level.</template>
 <script>
 {
 const L='ABCDE';
@@ -242,7 +247,34 @@ function normalize(d){
     if(!ans||L.indexOf(ans)>=opts.length)throw Error(`Question ${i+1}: "answer" must be a letter A–${L[opts.length-1]}.`);
     return{id:String(q.id??`Q${i+1}`),type,topic:String(q.topic||''),subtopic:String(q.subtopic||''),difficulty:String(q.difficulty||'Medium'),source:String(q.source||''),passage:String(q.passage||q.stimulus||''),table:q.table&&Array.isArray(q.table.rows)?q.table:null,question:String(q.question||q.prompt||''),statements:st,options:opts,answer:ans,explanation:String(q.explanation||'')};
   });
-  return{title:String(d.title||'GMAT practice set'),section:String(d.section||''),timeLimitMinutes:Math.max(1,+d.timeLimitMinutes||45),questions:qs};
+  const t={title:String(d.title||'GMAT practice set'),section:String(d.section||''),timeLimitMinutes:Math.max(1,+d.timeLimitMinutes||45),questions:qs};
+  if(d.adaptive){
+    t.adaptive=true;t.questionCount=Math.min(qs.length,Math.max(1,+d.questionCount||23));
+    if(qs.length<t.questionCount+4)throw Error(`An adaptive set needs a bigger pool than the ${t.questionCount} questions it serves (got ${qs.length}).`);
+  }
+  return t;
+}
+/* ---------- adaptive engine: one question at a time, difficulty follows performance ---------- */
+const LV=d=>({easy:1,medium:2,hard:3,'very hard':4})[String(d).toLowerCase()]||2;
+const LVNAME=['','Easy','Medium','Hard','Very Hard'];
+const N=()=>S.test.adaptive?S.test.questionCount:S.test.questions.length;
+function pickNext(){
+  const used=new Set(S.used),last=S.test.questions[S.test.questions.length-1];
+  const target=Math.min(4,Math.max(1,Math.round(S.theta)));
+  for(let dist=0;dist<4;dist++){
+    const c=S.pool.map((q,i)=>i).filter(i=>!used.has(i)&&Math.abs(LV(S.pool[i].difficulty)-target)===dist);
+    if(!c.length)continue;
+    const fresh=last?c.filter(i=>S.pool[i].subtopic!==last.subtopic):c;
+    const from=fresh.length?fresh:c,i=from[Math.floor(Math.random()*from.length)];
+    S.used.push(i);S.test.questions.push(S.pool[i]);return;
+  }
+}
+function adapt(){
+  const q=S.test.questions[S.idx],lv=LV(q.difficulty),ok=S.answers[S.idx]===q.answer;
+  // staircase that settles where you get about 60% right, like a real adaptive test
+  const step=Math.max(0.4,1.2*Math.pow(0.88,S.idx));
+  if(ok)S.theta+=0.8*step*(lv>=S.theta-0.5?1:0.4);else S.theta-=1.2*step*(lv<=S.theta+0.5?1:0.4);
+  S.theta=Math.min(4,Math.max(1,S.theta));
 }
 
 function tableHTML(t){
@@ -257,7 +289,7 @@ function renderLoad(err){
   app.innerHTML=`<div class="wrap">
   <h1>Load a practice section</h1>
   <p class="lede">Upload or paste the JSON Claude gives you. You get exam rules: one question at a time, a running clock, and a review screen with up to 3 answer edits. Tests and results sync to every device you log in from.</p>
-  ${live?`<div class="card resume"><div><b>${esc(S.test.title)}</b><span class="mut small">In progress · question ${S.idx+1} of ${S.test.questions.length} · ${fmt((S.endAt-Date.now())/1000)} left${S.savedAt?' · last active '+esc(new Date(S.savedAt).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})):''}</span></div><div class="row"><button class="pri" data-act="resume">Resume</button><button class="ghost" data-act="discard">Discard</button></div></div>`:''}
+  ${live?`<div class="card resume"><div><b>${esc(S.test.title)}</b><span class="mut small">In progress · question ${S.idx+1} of ${N()} · ${fmt((S.endAt-Date.now())/1000)} left${S.savedAt?' · last active '+esc(new Date(S.savedAt).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})):''}</span></div><div class="row"><button class="pri" data-act="resume">Resume</button><button class="ghost" data-act="discard">Discard</button></div></div>`:''}
   <div class="grid2" style="margin-top:20px">
     <label class="drop" id="drop"><input type="file" id="file" accept=".json,application/json,text/plain"><b>Upload a .json file</b><span class="mut small">A test from Claude, or a history export</span></label>
     <div class="paste"><textarea id="txt" spellcheck="false" placeholder='Or paste the JSON here: { "title": …, "questions": [ … ] }'></textarea><button class="pri" data-act="paste">Load pasted JSON</button></div>
@@ -266,7 +298,7 @@ function renderLoad(err){
   <div id="prev"></div>
   <p class="mut small" style="margin-top:18px">No test yet? <button class="link" data-act="sample">Load the 5-question sample</button></p>
   <details><summary>Prompt to get a test from Claude</summary><p class="mut small">Copy this into any chat, replace the topic, then paste Claude’s JSON above.</p><textarea id="prompt" readonly style="min-height:220px"></textarea><div class="row" style="margin-top:10px"><button class="ghost" data-act="copyPrompt">Copy prompt</button></div></details>
-  ${tests.length?`<div class="sechead"><h2>My tests</h2><span class="mut small">${tests.length} saved</span></div><div class="lib">${tests.map((t,i)=>{const at=byTest[t.id]||[],best=at.reduce((m,h)=>Math.max(m,h.report.score.correct),-1);return`<div class="lrow"><div><b>${esc(t.title)}</b><div class="mut small">${t.test.questions.length} questions · ${t.test.timeLimitMinutes} min · ${at.length?`${at.length} attempt${at.length>1?'s':''}, best ${best}/${t.test.questions.length}`:'not taken yet'}</div></div><div class="row"><button class="pri" data-act="take" data-i="${i}">${at.length?'Retake':'Take'}</button><button class="ghost" data-act="rmtest" data-i="${i}">Remove</button></div></div>`}).join('')}</div>`:''}
+  ${tests.length?`<div class="sechead"><h2>My tests</h2><span class="mut small">${tests.length} saved</span></div><div class="lib">${tests.map((t,i)=>{const at=byTest[t.id]||[],best=at.reduce((m,h)=>Math.max(m,h.report.score.correct),-1);return`<div class="lrow"><div><b>${esc(t.title)}</b><div class="mut small">${t.test.adaptive?`Adaptive · ${t.test.questionCount} of ${t.test.questions.length}`:`${t.test.questions.length} questions`} · ${t.test.timeLimitMinutes} min · ${at.length?`${at.length} attempt${at.length>1?'s':''}, best ${best}/${t.test.adaptive?t.test.questionCount:t.test.questions.length}`:'not taken yet'}</div></div><div class="row"><button class="pri" data-act="take" data-i="${i}">${at.length?'Retake':'Take'}</button><button class="ghost" data-act="rmtest" data-i="${i}">Remove</button></div></div>`}).join('')}</div>`:''}
   <div class="sechead"><h2>Past attempts</h2><div class="row"><button class="ghost" data-act="export">Export history</button><label class="ghost" style="display:inline-flex;align-items:center;min-height:44px;padding:0 18px;border:1px solid var(--line);border-radius:10px;cursor:pointer">Import<input type="file" id="imp" accept=".json,application/json,text/plain" style="position:absolute;opacity:0;width:1px;height:1px"></label></div></div>
   ${hist.length?`<div class="hist">${hist.map(h=>`<button class="hrow" data-act="hist" data-id="${esc(h.id)}"><span>${esc(h.report.title)}<br><span class="mut small">${esc(new Date(h.report.takenAt).toLocaleString())}</span></span><span class="num">${fmt(h.report.timeUsedSec)}</span><span class="num"><b>${h.report.score.correct}/${h.report.score.total}</b></span></button>`).join('')}</div>`:'<p class="mut">No attempts yet. Finished sections show up here on every device.</p>'}
   <div id="exp" hidden><p class="mut small">Select all and copy, or save it as a .json file. Import it on any device.</p><textarea id="expTxt" readonly></textarea></div>
@@ -291,18 +323,19 @@ function loadData(raw){
   if(d&&d.app==='GMAT Practice Room'&&d.score&&Array.isArray(d.questions)){showErr('That’s a single report. Upload a history export (Export history) or a test JSON instead.');return}
   try{pending=normalize(d)}catch(e){pending=null;showErr(e.message);document.getElementById('prev').innerHTML='';return}
   showErr('');saveTest(pending);
-  const t=pending,n=t.questions.length,c={},dc={};
+  const t=pending,n=t.adaptive?t.questionCount:t.questions.length,c={},dc={};
   t.questions.forEach(q=>{c[q.type]=(c[q.type]||0)+1;dc[q.difficulty]=(dc[q.difficulty]||0)+1});
   const p=document.getElementById('prev');
-  p.innerHTML=`<div class="card"><h2 style="margin:0 0 4px">${esc(t.title)}</h2><div class="mut">${esc(t.section)}${t.section?' · ':''}${n} questions · ${t.timeLimitMinutes} minutes · about ${fmt(t.timeLimitMinutes*60/n)} per question</div>
-  <div class="chips">${Object.entries(c).map(([k,v])=>`<span class="chip">${esc(TYPES[k]||k)} × ${v}</span>`).join('')}${Object.entries(dc).map(([k,v])=>`<span class="chip">${esc(k)} × ${v}</span>`).join('')}</div>
-  <ul class="rules"><li>You must answer each question to move on; you can’t go back during the section.</li><li>Bookmark anything you want to revisit. After the last question you can review and change up to 3 answers.</li><li>The clock keeps running if you leave the page or switch devices. At 0:00 the section ends and unanswered questions count as wrong.</li></ul>
+  p.innerHTML=`<div class="card"><h2 style="margin:0 0 4px">${esc(t.title)}</h2><div class="mut">${esc(t.section)}${t.section?' · ':''}${t.adaptive?`<b>Adaptive</b> · ${n} questions drawn from a pool of ${t.questions.length}`:`${n} questions`} · ${t.timeLimitMinutes} minutes · about ${fmt(t.timeLimitMinutes*60/n)} per question</div>
+  <div class="chips">${t.adaptive?'<span class="chip"><b>Pool:</b></span>':''}${Object.entries(c).map(([k,v])=>`<span class="chip">${esc(TYPES[k]||k)} × ${v}</span>`).join('')}${Object.entries(dc).map(([k,v])=>`<span class="chip">${esc(k)} × ${v}</span>`).join('')}</div>
+  <ul class="rules">${t.adaptive?'<li>Adaptive, like the real exam: you start at Medium, a right answer makes the next question harder and a wrong one makes it easier. Harder questions showing up means you’re doing well.</li>':''}<li>You must answer each question to move on; you can’t go back during the section.</li><li>Bookmark anything you want to revisit. After the last question you can review and change up to 3 answers${t.adaptive?' (changes count toward your score but don’t change which questions you saw)':''}.</li><li>The clock keeps running if you leave the page or switch devices. At 0:00 the section ends and unanswered questions count as wrong.</li></ul>
   <button class="pri" data-act="start">Start the ${t.timeLimitMinutes}-minute section</button></div>`;
   p.scrollIntoView({behavior:'smooth',block:'start'});
 }
 function start(){
-  const now=Date.now(),n=pending.questions.length;
-  S={test:pending,idx:0,phase:'test',view:'q',answers:Array(n).fill(null),times:Array(n).fill(0),bookmarks:Array(n).fill(false),orig:null,startAt:now,endAt:now+pending.timeLimitMinutes*60000,qStart:now};
+  const now=Date.now(),ad=!!pending.adaptive,n=ad?pending.questionCount:pending.questions.length;
+  S={test:ad?{...pending,questions:[]}:pending,pool:ad?pending.questions:null,used:[],theta:2,poolId:testId(pending),idx:0,phase:'test',view:'q',answers:Array(n).fill(null),times:Array(n).fill(0),bookmarks:Array(n).fill(false),orig:null,startAt:now,endAt:now+pending.timeLimitMinutes*60000,qStart:now};
+  if(ad)pickNext();
   pending=null;save();pushSession();render();startTick();
 }
 function exportHistory(btn){
@@ -329,7 +362,7 @@ function stamp(){if(S.qStart!=null)S.times[S.idx]+=(Date.now()-S.qStart)/1000;S.
 /* ---------- test ---------- */
 function render(){
   if(!S||S.phase==='done')return renderLoad();
-  view='test';const n=S.test.questions.length,list=S.phase==='review'&&S.view==='list';
+  view='test';const n=N(),list=S.phase==='review'&&S.view==='list';
   hud.innerHTML=`<div class="hi">${ICON.clock}<div><small>Time Remaining</small><button class="clock" id="clock" data-act="clock" aria-label="Time remaining, tap to hide"></button></div></div><div class="hi">${ICON.list}<span class="cnt">${list?'Review':`${S.idx+1} of ${n}`}</span></div>`;
   tool.hidden=false;
   tool.innerHTML=`<span>${esc(S.test.section||S.test.title)}${S.phase==='review'?' · Review &amp; Edit':''}</span>${list?'':`<button class="tbtn" data-act="bm" aria-pressed="${!!S.bookmarks[S.idx]}">${ICON.flag}Bookmark for Review</button>`}`;
@@ -338,7 +371,7 @@ function render(){
 }
 const edits=()=>S.orig?S.answers.filter((a,i)=>a!==S.orig[i]).length:0;
 function renderQ(){
-  const q=S.test.questions[S.idx],a=S.answers[S.idx],n=S.test.questions.length,rev=S.phase==='review';
+  const q=S.test.questions[S.idx],a=S.answers[S.idx],n=N(),rev=S.phase==='review';
   const locked=rev&&edits()>=3&&a===S.orig[S.idx];
   const stim=q.passage||q.table;
   app.innerHTML=`<div class="q ${stim?'split':''}">
@@ -369,7 +402,7 @@ function finish(timedOut){
   stopTick();stamp();
   S.phase='done';S.finishedAt=Math.min(Date.now(),S.endAt);S.timedOut=!!timedOut;
   const report=buildReport();
-  const entry={id:'a'+S.startAt,testId:testId(S.test),report,test:S.test};
+  const entry={id:'a'+S.startAt,testId:S.poolId||testId(S.test),report,test:S.test};
   const hist=getHist().filter(h=>h.id!==entry.id);hist.unshift(entry);setHist(hist);store.del(KEY);
   clearTimeout(sessT);push('attempt',entry.id,entry).then(ok=>{if(ok)drop('session','current')});
   view='results';renderResults(report,S.test);
@@ -377,11 +410,11 @@ function finish(timedOut){
 
 /* ---------- report ---------- */
 function buildReport(){
-  const qs=S.test.questions,n=qs.length,limit=S.test.timeLimitMinutes*60;
-  const rows=qs.map((q,i)=>({n:i+1,id:q.id,type:q.type,topic:q.topic,subtopic:q.subtopic,difficulty:q.difficulty,yourAnswer:S.answers[i],correctAnswer:q.answer,correct:S.answers[i]===q.answer,timeSec:Math.round(S.times[i]),bookmarked:S.bookmarks[i],changedInReview:!!(S.orig&&S.answers[i]!==S.orig[i])}));
+  const qs=S.test.questions,n=N(),limit=S.test.timeLimitMinutes*60;
+  const rows=qs.map((q,i)=>({n:i+1,id:q.id,type:q.type,topic:q.topic,subtopic:q.subtopic,difficulty:q.difficulty,level:LV(q.difficulty),yourAnswer:S.answers[i],correctAnswer:q.answer,correct:S.answers[i]===q.answer,timeSec:Math.round(S.times[i]),bookmarked:S.bookmarks[i],changedInReview:!!(S.orig&&S.answers[i]!==S.orig[i])}));
   const group=k=>{const g={};rows.forEach(r=>{const key=r[k]||'Other';g[key]=g[key]||{total:0,correct:0,timeSec:0};g[key].total++;g[key].correct+=r.correct?1:0;g[key].timeSec+=r.timeSec});for(const v of Object.values(g)){v.accuracy=Math.round(100*v.correct/v.total);v.avgTimeSec=Math.round(v.timeSec/v.total)}return g};
   const correct=rows.filter(r=>r.correct).length;
-  return{app:'GMAT Practice Room',version:1,title:S.test.title,section:S.test.section,takenAt:new Date(S.startAt).toISOString(),timeLimitSec:limit,timeUsedSec:Math.round((S.finishedAt-S.startAt)/1000),timedOut:S.timedOut,targetPaceSec:Math.round(limit/n),answered:rows.filter(r=>r.yourAnswer).length,score:{correct,total:n,accuracy:Math.round(100*correct/n)},byDifficulty:group('difficulty'),byType:group('type'),byTopic:group('topic'),questions:rows};
+  return{app:'GMAT Practice Room',version:1,title:S.test.title,section:S.test.section,takenAt:new Date(S.startAt).toISOString(),timeLimitSec:limit,timeUsedSec:Math.round((S.finishedAt-S.startAt)/1000),timedOut:S.timedOut,targetPaceSec:Math.round(limit/n),answered:rows.filter(r=>r.yourAnswer).length,score:{correct,total:n,accuracy:Math.round(100*correct/n)},notReached:n-qs.length,...(S.test.adaptive?{adaptive:true,poolSize:S.pool.length,finalLevel:Math.round(S.theta*10)/10,finalLevelName:LVNAME[Math.round(S.theta)]}:{}),byDifficulty:group('difficulty'),byType:group('type'),byTopic:group('topic'),questions:rows};
 }
 function renderResults(R,test){
   stopTick();hud.innerHTML='';tool.hidden=true;
@@ -392,8 +425,9 @@ function renderResults(R,test){
   app.innerHTML=`<div class="wrap">
   <div class="mut">${esc(R.title)} · ${esc(new Date(R.takenAt).toLocaleString())}</div>
   <div class="score"><div class="big">${R.score.correct}<small>/${R.score.total}</small></div>
-  <div class="figs"><div><b>${R.score.accuracy}%</b><span>accuracy</span></div><div><b>${fmt(R.timeUsedSec)}</b><span>of ${fmt(R.timeLimitSec)} used${R.timedOut?' · ran out':''}</span></div><div><b>${fmt(avg)}</b><span>avg per question (target ${fmt(pace)})</span></div><div><b>${slow}</b><span>slow questions (over ${fmt(pace*1.5)})</span></div></div></div>
+  <div class="figs"><div><b>${R.score.accuracy}%</b><span>accuracy</span></div><div><b>${fmt(R.timeUsedSec)}</b><span>of ${fmt(R.timeLimitSec)} used${R.timedOut?' · ran out':''}</span></div><div><b>${fmt(avg)}</b><span>avg per question (target ${fmt(pace)})</span></div><div><b>${slow}</b><span>slow questions (over ${fmt(pace*1.5)})</span></div>${R.notReached?`<div><b>${R.notReached}</b><span>not reached (count as wrong)</span></div>`:''}</div></div>
   <div class="copybar"><button class="pri" data-act="copy">Copy report for Claude</button>${top?'<button class="ghost" data-act="dl">Download .json</button>':''}<button class="ghost" data-act="home">New test</button><span class="note" id="cmsg">Paste the report into chat for a breakdown and the next set.</span></div>
+  ${R.adaptive?`<h2>Adaptive path</h2><p class="mut small" style="margin:0 0 6px">You finished at <b style="color:var(--ink)">${esc(R.finalLevelName)}</b> level (${R.finalLevel} on a 1–4 scale). Each bar is a question; its height is the difficulty you were given.</p><div class="path" style="--n:${R.questions.length}" role="img" aria-label="Difficulty of each question in order, green right, red wrong">${R.questions.map(r=>`<i class="${r.correct?'':'x'}" style="height:${(r.level||2)*25}%" title="Q${r.n}: ${esc(r.difficulty)}, ${r.correct?'right':'wrong'}"></i>`).join('')}</div><div class="pathax"><span>Q1</span><span>Easy · Medium · Hard · Very Hard</span><span>Q${R.questions.length}</span></div><div class="legend"><span>Right</span><span class="x">Wrong</span></div>`:''}
   <h2>By difficulty</h2><div class="bars">${dk.map(k=>{const v=R.byDifficulty[k];return`<div class="brow"><span>${esc(k)}</span><div class="track"><div class="fill" style="width:${v.accuracy}%"></div></div><span class="num">${v.correct}/${v.total} · ${fmt(v.avgTimeSec)}</span></div>`}).join('')}</div>
   <h2>By topic</h2><table class="stack"><thead><tr><th>Topic</th><th class="num">Correct</th><th class="num">Accuracy</th><th class="num">Avg time</th></tr></thead><tbody>${Object.entries(R.byTopic).map(([k,v])=>`<tr><td>${esc(k)}</td><td class="num">${v.correct}/${v.total}</td><td class="num">${v.accuracy}%</td><td class="num">${fmt(v.avgTimeSec)}</td></tr>`).join('')}</tbody></table>
   <h2>Every question</h2><table class="stack"><thead><tr><th>#</th><th>Topic</th><th>Difficulty</th><th>Yours</th><th>Correct</th><th>Result</th><th class="num">Time</th></tr></thead><tbody>${R.questions.map(r=>`<tr><td>${r.n}${r.bookmarked?' ★':''}</td><td>${esc(r.topic)}${r.subtopic?` <span class="mut">· ${esc(r.subtopic)}</span>`:''}</td><td>${esc(r.difficulty)}</td><td>${esc(r.yourAnswer||'—')}${r.changedInReview?' <span class="mut">(changed)</span>':''}</td><td>${esc(r.correctAnswer)}</td><td class="${r.correct?'ok':'bad'}">${r.correct?'Right':r.yourAnswer?'Wrong':'Unanswered'}</td><td class="num ${r.timeSec>pace*1.5?'slow':''}">${fmt(r.timeSec)}</td></tr>`).join('')}</tbody></table>
@@ -415,7 +449,7 @@ document.addEventListener('click',async e=>{
   else if(act==='discard'){if(arm('discard',b,'Tap again to discard')){store.del(KEY);S=null;drop('session','current');renderLoad()}}
   else if(act==='bm'){S.bookmarks[S.idx]=!S.bookmarks[S.idx];b.setAttribute('aria-pressed',S.bookmarks[S.idx]);save()}
   else if(act==='rvbm'){const i=S.bookmarks.findIndex(Boolean);if(i>=0){S.idx=i;S.view='q';S.qStart=Date.now();save();pushSession();render()}}
-  else if(act==='next'){if(!S.answers[S.idx])return;stamp();if(S.idx<S.test.questions.length-1){S.idx++;S.qStart=Date.now()}else{S.phase='review';S.view='list';S.orig=S.answers.slice()}save();pushSession();render()}
+  else if(act==='next'){if(!S.answers[S.idx])return;stamp();if(S.idx<N()-1){if(S.test.adaptive&&S.phase==='test'){adapt();if(S.test.questions.length<=S.idx+1)pickNext()}S.idx++;S.qStart=Date.now()}else{if(S.test.adaptive&&S.phase==='test')adapt();S.phase='review';S.view='list';S.orig=S.answers.slice()}save();pushSession();render()}
   else if(act==='open'){S.idx=+b.dataset.i;S.view='q';S.qStart=Date.now();save();pushSession();render()}
   else if(act==='back'){stamp();S.view='list';save();pushSession();render()}
   else if(act==='end'){modal('End Section Review','Are you sure you want to end this section? You won’t be able to change any more answers.',['No','Yes']).then(v=>{if(v===1&&S&&S.phase!=='done')finish(false)})}
